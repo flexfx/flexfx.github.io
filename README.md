@@ -68,7 +68,7 @@ python xio.py 0 your_app.bin
 
 7) A FlexFX system can be firmware upgraded using USB/MIDI.  But if that fails due to misbehaving custom programs or FLASH data corruption you can to revert your system back to its original/factory condition.  Use the JTAG device (XMOS XTAG2 or XTAG3) to load the factory XIO firmware into the factory and upgrade portions of the FLASH boot partition ...
 ```
-xflash --boot-partition-size 1044480 --no-compression --factory bin/xio.xe --upgrade 1 bin/xio.xe
+xflash --boot-partition-size 1048576 --no-compression --factory bin/xio.xe --upgrade 1 bin/xio.xe
 ```
 
 You can create custom audio processing effects by downloading the FlexFX&trade; audio processing framework, adding custom audio processing DSP code and property handling code, and then compiling and linking using XMOS tools (xTIMEcomposer, free to download).
@@ -88,13 +88,6 @@ The 'xio.h' file defines the application interface for USB/I2S audio and MIDI ap
 ```C
 #ifndef INCLUDED_XIO_H
 #define INCLUDED_XIO_H
-
-// FQ converts Q28 fixed-point to floating point
-// QF converts floating-point to Q28 fixed-point
-
-#define QQ 28
-#define FQ(hh) (((hh)<0.0)?((int)((double)(1u<<QQ)*(hh)-0.5)):((int)(((double)(1u<<QQ)-1)*(hh)+0.5)))
-#define QF(xx) (((int)(xx)<0)?((double)(int)(xx))/(1u<<QQ):((double)(xx))/((1u<<QQ)-1))
 
 typedef unsigned char byte;
 typedef unsigned int  bool;
@@ -298,63 +291,3 @@ USB host ---> [ 0x04, 0, 0, 0, 0, 0 ]
 USB host <--- [ 0x04, 0, 0, 0, 0, 0 ]
 ```
 Close thge FLASH device and reboot to end the firmware upgrade process.
-
-#### FlexFX ID = 0x05: Report, broadcast, or accept the footswitch state and up to four knob positions
-
-```
-USB host  <--- [ 0x05, fswitch, knob1, knob2, knob3, knob4 ]
-Serial TX <--- [ 0x05, fswitch, knob1, knob2, knob3, knob4 ]
-Serial RX ---> [ 0x05, fswitch, knob1, knob2, knob3, knob4 ]
-
-```
-
-#### FlexFX ID = 0x06-0x0A Read and write preset parameter values for presets 1 through 5
-
-```
-USB host ---> [ 0x06-0x0A, values[1:4], values[5:8], values[9:12], values[13:16], values[17:20] ]
-USB host <--- [ 0x06-0x0A, values[1:4], values[5:8], values[9:12], values[13:16], values[17:20] ]
-
-where 1 <= value <= 99 for writing/reading, value == 0 for reading
-```
-
-Returns and potentially updates all parameter values for preset P.  There are 20 paramter values for each of the five presets.  Each parameter value ranges from 1 to 99.  Parameter values of zero are not written to the device - use this behavior for performing read-only operations.
-
-Prebuilt Effects
-----------------------------------
-
-The FlexFX kit contains highly optimized effects for delay, overdrive, equalization, reverb, and cabinet simulation as part of the FlexFX C99 project. These effects are in source and binary (\*.bin) form and can be used for free on FlexFX boards.  All effects support full control over each effect's presets and parameter settings via FlexFX properties sent and received over USB/MIDI using the 'xio.py' script, 'c99.html' Google Chrome HTML interface, or any other
-application programmed to use USB/MIDI for FlexFX property data transfer.
-
-**Amplifier/Cabinit Simulation**
-Amp and cabinet simulation using impulse responses. A tube amplifier model and tone stack followed by up to 40 milliseconds of impulse response processing. Effect parameters for amplifier drive, bass boost/cut and center frequency, midrange boost/cut and center frequency, treble boost/cut and center frequency, power supply sag, output volume, and cabinet impulse response selection. Up to five presets.
-
-**Tube Preamp/Overdrive**
-Three-stage tube preamp overdrive model with customizable preamp responses and dynamics per preamp stage. Internal DSP processing at 12x oversampling (i.e. at 576 kHz) using 32/64 bit math functions.  Effect parameters for input drive, pre-stage bass cut, post-stage treble cut, slew-rate limiting, stage gain, triode/tube bias points, and output volume. Up to five presets.
-
-**Delay/Chorus/Flanger**
-Combination delay/chorus/flanger supporting variable LFO frequency, variable delay, feedback adjustment, tone filtering, and wet/dry blending. Parameters for input drive, delay time, LFO rate, modulation depth, parametric filter frequency and Q-factor, wet signal diffusion, feedback level, wet/dry mix and output volume. Up to five presets.
-
-**Graphic Equalizer**
-15-band graphic equalizer with -12dB cut to +12dB boost per band. Up to five presets for EQ band cut/boost levels and output volume.
-
-Stackable Expansion Boards
-----------------------------------
-
-All FlexFX exansion boards stack directly above or below the FlexFX USB/DSP board allowing for a very compact system.
-The PCB board design files are freely available. Fully assembled and tested boards are also available from Tindie (comming soon).
-
-![alt tag](boards.png)
-
-**Guitar Effects Interface**
-Ultra low noise buffered guitar interface and mono line-level output using the AK4621 differentialin/out stereo CODEC. Fully
-differential analog signaling between the input buffers / output drivers and the CODEC.  Also has three additional low noise analog inputs for potentiometers and WAH pedals.
-
-**8x8 Analog Input//Output**
-8x8 analog interface using four AK4556 24-bit CODECs. Has 8 inputs and 8 outputs all with DC coupling (CODECs are configured to disable the HPF so that low frequency or DC signals can be sensed) this could be used for synth projects or effects where you want the parameter controls to used in real time.
-
-**Headphone Amplifier**
-Low distortion and low noise headphone amplifier with all DC coupling (AK4482 DAC outputs to headphone jack). Four low-noise buffers (two per differential DAC output) driving 2nd order RLC low pass filters (to filter out DAC sigma-delta conversion noise) and two dual high current OPA's (one AD8397 per channel for virtual ground, DC shift, and headphone driver). Response is +/-1dB to 170kHz with less than 6 degrees or phase shift at 20kHz. Filters have -70dB attenuation at 6.144 Mhz (frequency of sigma-delta).  Performance: ~0.0003% THD at 10kHz and ~0.00003 at 1kHz while driving 32 ohm headphones at 1 Vrms (2.8 volts pk-pk).
-
-**Power Adapter/Selector/ADC**
-Power adpator board for powering a FlexFX system from 9V. Can auto-detect between the 9V power source and USB power for glitch-free power when changing 9V/USB power sources. Also has an eight-channel low-speed ADC for connecting additional potentiometers for effects applications requireing many knobs/controls.
-
