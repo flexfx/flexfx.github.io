@@ -1,35 +1,5 @@
 import os, sys
-
-
 import math
-
-
-def QF(xx): return (1.0*xx) / ((2**28)-0)
-
-print QF(0x08000000)
-
-exit()
-
-
-
-for ii in range(0,6):
-    print math.e ** -(2**ii)
-
-for ii in range(6,12):
-    print math.e ** -(2**ii)
-
-for ii in range(12,18):
-    print math.e ** -(2**ii)
-
-for ii in range(18,24):
-    print math.e ** -(2**ii)
-
-
-print math.e ** -(2**1)
-
-
-
-
 
 if len(sys.argv) < 5:
 
