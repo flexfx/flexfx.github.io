@@ -94,7 +94,8 @@ window.addEventListener('load', function()
     console.log(text);
     $('controls').innerHTML = text;
 
-    _disable_interface();    
+    _enable_interface();
+    //_disable_interface();    
 });
 
 var _midi_input_port = 0, _midi_output_port = 0;
