@@ -13,28 +13,30 @@ var control_labels =
     "TONE - LOWER GAIN", "TONE - LOWER FREQ",
     "TONE - MIDDLE GAIN", "TONE - MIDDLE FREQ",
     "TONE - UPPER GAIN", "TONE - UPPER FREQ",
-    "DELAY - DELAY TIME", "DELAY - LFO RATE", "DELAY - MOD DEPTH", "DELAY - WET/DRY MIX",
+    "DELAY - DELAY TIME", "DELAY - LFO RATE", "DELAY - MOD DEPTH", "DELAY - FEEDBACK", "DELAY - WET/DRY MIX",
     "REVERB - REFLECTION", "REVERB - DAMPING", "REVERB - WET/DRY MIX",
-    "OUTPUT - CAB IR", "OUTPUT - VOLUME"
+    "OUTPUT - CAB IR", "OUTPUT - BALANCE", "OUTPUT - VOLUME"
 ];
 
 var control_ranges =
 [
-    [1,255,127], [1,255,127], [1,255,127], [1,255,127], [1,255,127], // Preamp
-    [1,255,127], [1,255,127], [1,255,127], [1,255,127], [1,255,127], [1,255,127], // Tone
-    [1,255,127], [1,255,127], [1,255,127], [1,255,127], // Delay
-    [1,255,127], [1,255,127], [1,255,127], // Reverb
-    [1,255,127], [1,255,127] // Output
+    [1,99,50], [1,99,50], [1,99,50], [1,99,50], [1,99,50], // Preamp
+    [1,99,50], [1,99,50], [1,99,50], [1,99,50], [1,99,50], [1,99,50], // Tone
+    [1,99,50], [1,99,50], [1,99,50], [1,99,50], [1,99,50], // Delay
+    [1,99,50], [1,99,50], [1,99,50], // Reverb
+    [1,99,50], [1,99,50], [1,99,50] // Output
 ];
 
 var control_colors =
 [
-    ['#F66','#FFF'], ['#F66','#FFF'], ['#F66','#FFF'], ['#F66','#FFF'], ['#F66','#FFF'], // Preamp
-    ['#DC0','#FFF'], ['#DC0','#FFF'], ['#DC0','#FFF'], ['#DC0','#FFF'], ['#DC0','#FFF'], ['#DC0','#FFF'], // Tone
-    ['#8AE','#FFF'], ['#8AE','#FFF'], ['#8AE','#FFF'], ['#8AE','#FFF'], // Delay
-    ['#6E8','#FFF'], ['#6E8','#FFF'], ['#6E8','#FFF'], // Reverb
-    ['#D5C','#FFF'], ['#D5C','#FFF'] // Output
+    ['#E87','#FFF'], ['#E87','#FFF'], ['#E87','#FFF'], ['#E87','#FFF'], ['#E87','#FFF'], // Preamp
+    ['#CC4','#FFF'], ['#CC4','#FFF'], ['#CC4','#FFF'], ['#CC4','#FFF'], ['#CC4','#FFF'], ['#CC4','#DDD'], // Tone
+    ['#8AE','#FFF'], ['#8AE','#FFF'], ['#8AE','#FFF'], ['#8AE','#FFF'], ['#8AE','#FFF'], // Delay
+    ['#8DA','#FFF'], ['#8DA','#FFF'], ['#8DA','#FFF'], // Reverb
+    ['#D8D','#FFF'], ['#D8D','#FFF'], ['#D8D','#FFF'] // Output
 ];
+
+var support_stereo = 1;
 
 var control_count  = control_labels.length;
 
@@ -42,7 +44,7 @@ var control_count  = control_labels.length;
 
 <head>
   <meta charset="utf-8">
-  <title>Product Name</title>
+  <title>FlexFX</title>
   <meta name="description" content="">
   <meta name="viewport" content="width=device-width, initial-scale=1">
 </head>
@@ -70,18 +72,23 @@ window.addEventListener('load', function()
     text += "<div style='height:8px;'></div>";
     text += "<div style='display:flex; flex-direction:row; '>";
     text += "<div style='display:flex; justify-content:left; width:140px;'><h3>";
-    text += product_name;
-    text += "</h5></div>";
+    text += product_name + "</h5></div>";
     text += "<div style='display:flex; justify-content: center;'><input type='file' style='display:none' id='upload_input'/><button id='upload_button'>Upgrade</button></div>";
+    text += "<div style='width:12px;'></div>";
+    text += "<div style='display:flex; justify-content: center;'><button id='side'>Left</button></div>";
     text += "</div>";
     text += "<div style='height:8px;'></div>";
     for( var ii = 0; ii < control_labels.length && ii < control_ranges.length; ++ii )
     {
-        text += "<div style='height:33px; width:100%; justify-content:bottom; position:relative;' id='CNTRL_"+ii+"'>";        
-        text += "<h5 style='position:absolute; padding-left:12px;' id='LABEL_" + ii + "'>" + control_labels[ii] + "</h5>";
+        text += "<div style='height:34px; width:100%; justify-content:bottom; position:relative;' id='CNTRL_"+ii+"'>";        
+        text += "<div style='display:flex; position:absolute; padding-left:12px; width:100%;'>";
+        text += "<h5 style='pointer-events:none; width:100%; align-items:center;" + "color:" + control_colors[ii][1] + "' id='LABEL_" + ii + "'>" + control_labels[ii] + "</h5>";
+        text += "<h5 style='pointer-events: none; " + "color:" + control_colors[ii][1] + "' id='VALUE_" + ii + "'>" + "01" + "</h5>";
+        text += "<div style='width:20px;'></div></div>"; 
         var type = 1, min = control_ranges[ii][0], max = control_ranges[ii][1], val = control_ranges[ii][2];
         text += "<input style='position:absolute;' class='slider' type='range' min='"+min+"' max='"+max+"' value='"+val+"' step='1' id='INPUT_"+ii+"'></input>";
         text += "</div>";
+        text += "<div style='height:0px;'></div>";
     }
     text += "</div>";
     console.log(text);
@@ -94,7 +101,7 @@ var _midi_input_port = 0, _midi_output_port = 0;
 var _dfu_transfer_count = 0, _dfu_transfer_data = 0, _dfu_transfer_size = 0;
 var _preset_number = 0;
 var _update_button = 0;
-var _settings = [ 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 ];
+var _settings = [ 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 ];
 
 function array_to_ui1  (a) { return a[0]; }
 function array_to_ui2be(a) { return a[1]+256*a[0]; }
@@ -141,15 +148,6 @@ function _on_midi_connect( event )
 
 function reload_page() { location.reload(); }
 
-function _update_param( object )
-{
-    console.log(object.target.id,object.target.value);
-    var key = object.target.id;
-    _settings[ parseInt( key.slice(5) ) ] = parseInt( object.target.value );
-    _update_interface();
-    //_midi_output_port.send( _prop_to_midi( _settings_to_prop( 0x0005, _settingsL )));
-}
-
 function _enable_interface()
 {
     for( var ii = 0; ii < control_count; ++ii ) $('CNTRL_'+ii).disabled = false;
@@ -160,6 +158,17 @@ function _enable_interface()
     };
     window.onmouseup = function(event) {
     };
+}
+
+function _update_interface()
+{
+    for( var ii = 0; ii < control_count; ++ii )
+    {
+        var input = $('INPUT_'+ii);
+        var value = parseInt( $('INPUT_'+ii).value );
+        if( value > 9 ) $('VALUE_'+ii).innerHTML = value.toString();
+        else $('VALUE_'+ii).innerHTML = "0" + value.toString();
+    }
 }
 
 function _disable_interface()
@@ -185,6 +194,16 @@ function refresh_interface2()
         setTimeout( refresh_interface1, 100 );
         _midi_output_port.send(_prop_to_midi([0x0005,0,0,0,0,0]));
     }
+}
+
+function _update_param( object )
+{
+    var value = parseInt( object.target.id,object.target.value );
+    var index = parseInt( object.target.id.slice(6) );
+    console.log(index);
+    _settings[ index ] = parseInt( object.target.value );
+    _update_interface();
+    //_midi_output_port.send( _prop_to_midi( _settings_to_prop( 0x0005, _settingsL )));
 }
 
 function property_to_text( prop )
@@ -267,13 +286,32 @@ function _on_midi_message( event )
     }
     else if( opcode == 0x0006 )
     {
-        for( var ii = 0; ii < 3; ++ii )
-        {
-            _settings[4*ii+0] = (property[ii+1] >> 24) & 255;
-            _settings[4*ii+1] = (property[ii+1] >> 16) & 255;
-            _settings[4*ii+2] = (property[ii+1] >>  8) & 255;
-            _settings[4*ii+3] = (property[ii+1] >>  0) & 255;
-        }
+        _settings[ 0] = ((property[1] & 0xFE000000) >> 25);
+        _settings[ 1] = ((property[1] & 0x01FC0000) >> 18);
+        _settings[ 2] = ((property[1] & 0x0003F800) >> 11);
+        _settings[ 3] = ((property[1] & 0x00000EF0) >>  4);
+        _settings[ 4] = ((property[1] & 0x0000000F) <<  3)
+                      + ((property[2] & 0xE0000000) >> 29);
+        _settings[ 5] = ((property[2] & 0x1FC00000) >> 22);
+        _settings[ 6] = ((property[2] & 0x003F8000) >> 15);
+        _settings[ 7] = ((property[2] & 0x0000EF00) >>  8);
+        _settings[ 8] = ((property[2] & 0x000000FE) >>  1)
+                      + ((property[2] & 0x00000001) <<  6);
+        _settings[ 9] = ((property[3] & 0xFC000000) << 26);
+        _settings[10] = ((property[3] & 0x03F80000) >> 19);
+        _settings[11] = ((property[3] & 0x000EF000) >> 12);
+        _settings[12] = ((property[3] & 0x00000FE0) >>  5);
+        _settings[13] = ((property[3] & 0x0000001F) <<  2)
+                      + ((property[4] & 0xC0000000) >> 30);
+        _settings[14] = ((property[4] & 0x3F800000) >> 23);
+        _settings[15] = ((property[4] & 0x00EF0000) >> 16);
+        _settings[16] = ((property[4] & 0x0000FE00) >>  9);
+        _settings[17] = ((property[4] & 0x000001FC) >>  2);
+        _settings[18] = ((property[4] & 0x00000003) <<  5)
+                      + ((property[5] & 0xF8000000) >> 27);
+        _settings[19] = ((property[5] & 0x0EF00000) >> 20);
+        _settings[20] = ((property[5] & 0x000FE000) >> 13);
+        _settings[21] = ((property[5] & 0x00001FC0) >>  6);
 
         for( var ii = 0; ii < control_count; ++ii ) $('CNTRL_'+ii.toString()).value = _settings[ii];
         _update_interface();
@@ -361,7 +399,7 @@ body {
 
 h1, h2, h3, h4, h5, h6 { margin-top: 0; margin-bottom: 0rem; font-weight: 300; }
 h3 { font-size: 3.0rem; line-height: 1.0;  letter-spacing: -.1rem; }
-h5 { font-size: 1.8rem; line-height: 1.8;  letter-spacing: -.05rem; }
+h5 { font-size: 1.8rem; line-height: 2.0;  letter-spacing: -.05rem; }
 
 button, html input[type="button"],
 input[type="reset"],
@@ -378,7 +416,7 @@ button[disabled], html input[disabled] { cursor: default; }
 {
   display:flex; align-items:center; justify-content:center;
   -webkit-appearance: none; -webkit-transition: .2s;
-  height:34px; width:120px;
+  height:34px; width:96px;
   margin-top:0; margin-bottom:0;
   font-size: 16px; font-weight: 500; text-decoration: none; white-space: nowrap;
   outline: none;
@@ -395,7 +433,7 @@ input[type="button"]:disabled { color: #777; background-color: #222; border-colo
 input.slider {
     display:flex; align-items:center; justify-content:left;
     -webkit-appearance: none; -webkit-transition: .2s;
-    width: 100%; height: 30px; outline: none;
+    width: 100%; height: 31px; outline: none;
     border-radius: 3px; border: 1px solid #fff;
     background: #999; opacity: 0.5; transition: opacity .2s; padding: 1px;
     pointer-events: none;
@@ -403,12 +441,12 @@ input.slider {
 input.slider::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none; opacity: 0.8; 
-    width:48px; height:28px;
+    width:48px; height:29px;
     border-radius: 3px; border: 1px solid #FFF;
     background: #555;
     cursor: pointer; pointer-events: auto;
 }
-input.slider::-webkit-slider-thumb:active { background-color: #ccc; border-color: #fff; opacity: 1.0; } {}
+input.slider::-webkit-slider-thumb:active { background-color: #111; border-color: #fff; opacity: 1.0; } {}
 
 </style>
 
