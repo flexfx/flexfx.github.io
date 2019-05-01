@@ -126,7 +126,8 @@ function _on_midi_failure( error )
 
 function _on_midi_connect( event )
 {
-    _disable_interface();
+    //_disable_interface();
+    _enable_interface();
     
     var midi_access  = event.currentTarget;
     var midi_inputs  = event.currentTarget.inputs.values ();
