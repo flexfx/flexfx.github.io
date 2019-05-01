@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+
+<html lang="en">
+
+<script>
+
+var product_name = 'Example';
+
+var control_labels =
+[
+    "PREAMP - PRE LOW-CUT", "PREAMP - STAGE GAIN",
+    "PREAMP - MID EMPHASIS", "PREAMP - EMPH FREQ", "PREAMP - POST HIGH-CUT",
+    "TONE - LOWER GAIN", "TONE - LOWER FREQ",
+    "TONE - MIDDLE GAIN", "TONE - MIDDLE FREQ",
+    "TONE - UPPER GAIN", "TONE - UPPER FREQ",
+    "DELAY - DELAY TIME", "DELAY - LFO RATE", "DELAY - MOD DEPTH", "DELAY - WET/DRY MIX",
+    "REVERB - REFLECTION", "REVERB - DAMPING", "REVERB - WET/DRY MIX",
+    "OUTPUT - CAB IR", "OUTPUT - VOLUME"
+];
+
+var control_ranges =
+[
+    [1,255,127], [1,255,127], [1,255,127], [1,255,127], [1,255,127], // Preamp
+    [1,255,127], [1,255,127], [1,255,127], [1,255,127], [1,255,127], [1,255,127], // Tone
+    [1,255,127], [1,255,127], [1,255,127], [1,255,127], // Delay
+    [1,255,127], [1,255,127], [1,255,127], // Reverb
+    [1,255,127], [1,255,127] // Output
+];
+
+var control_colors =
+[
+    ['#F66','#FFF'], ['#F66','#FFF'], ['#F66','#FFF'], ['#F66','#FFF'], ['#F66','#FFF'], // Preamp
+    ['#DC0','#FFF'], ['#DC0','#FFF'], ['#DC0','#FFF'], ['#DC0','#FFF'], ['#DC0','#FFF'], ['#DC0','#FFF'], // Tone
+    ['#8AE','#FFF'], ['#8AE','#FFF'], ['#8AE','#FFF'], ['#8AE','#FFF'], // Delay
+    ['#6E8','#FFF'], ['#6E8','#FFF'], ['#6E8','#FFF'], // Reverb
+    ['#D5C','#FFF'], ['#D5C','#FFF'] // Output
+];
+
+var control_count  = control_labels.length;
+
+</script>
+
+<head>
+  <meta charset="utf-8">
+  <title>Product Name</title>
+  <meta name="description" content="">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+
+<body>
+
+<div class='container' id='main' style='display:block; opacity:1.0;'>
+  <div class='row'>
+    <div class='column' style='margin-top:0%;' id='controls'></div>
+  </div>
+</div>
+
+</body>
+
+<script>var $ = function(id) { return document.getElementById(id); };</script>
+
+<script>
+
+window.addEventListener('load', function()
+{    
+    if(navigator.requestMIDIAccess) {
+        navigator.requestMIDIAccess({sysex:true}).then(_on_midi_success,_on_midi_failure);
+    }
+    var text = "";
+    text += "<div style='height:8px;'></div>";
+    text += "<div style='display:flex; flex-direction:row; '>";
+    text += "<div style='display:flex; justify-content:left; width:140px;'><h3>";
+    text += product_name;
+    text += "</h5></div>";
+    text += "<div style='display:flex; justify-content: center;'><input type='file' style='display:none' id='upload_input'/><button id='upload_button'>Upgrade</button></div>";
+    text += "</div>";
+    text += "<div style='height:8px;'></div>";
+    for( var ii = 0; ii < control_labels.length && ii < control_ranges.length; ++ii )
+    {
+        text += "<div style='height:33px; width:100%; justify-content:bottom; position:relative;' id='CNTRL_"+ii+"'>";        
+        text += "<h5 style='position:absolute; padding-left:12px;' id='LABEL_" + ii + "'>" + control_labels[ii] + "</h5>";
+        var type = 1, min = control_ranges[ii][0], max = control_ranges[ii][1], val = control_ranges[ii][2];
+        text += "<input style='position:absolute;' class='slider' type='range' min='"+min+"' max='"+max+"' value='"+val+"' step='1' id='INPUT_"+ii+"'></input>";
+        text += "</div>";
+    }
+    text += "</div>";
+    console.log(text);
+    $('controls').innerHTML = text;
+
+    _disable_interface();    
+});
+
+var _midi_input_port = 0, _midi_output_port = 0;
+var _dfu_transfer_count = 0, _dfu_transfer_data = 0, _dfu_transfer_size = 0;
+var _preset_number = 0;
+var _update_button = 0;
+var _settings = [ 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 ];
+
+function array_to_ui1  (a) { return a[0]; }
+function array_to_ui2be(a) { return a[1]+256*a[0]; }
+function array_to_ui2le(a) { return a[0]+256*a[1]; }
+function array_to_ui4be(a) { return 16777216*a[0]+65536*a[1]+256*a[2]+a[3]; }
+function array_to_ui4le(a) { return a[0]+256*a[1]+65536*a[2]+16777216*a[3]; }
+
+function _on_midi_success( midiAccess )
+{
+    midiAccess.onstatechange = _on_midi_connect;
+    var event = new Object();
+    event.currentTarget = midiAccess;
+    _on_midi_connect( event );
+}
+
+function _on_midi_failure( error )
+{
+    //_disable_interface();
+    _enable_interface();
+}
+
+function _on_midi_connect( event )
+{
+    _disable_interface();
+    
+    var midi_access  = event.currentTarget;
+    var midi_inputs  = event.currentTarget.inputs.values ();
+    var midi_outputs = event.currentTarget.outputs.values();
+
+    for( var port = midi_inputs.next(); !port.done; port = midi_inputs.next() ) {
+        console.log(port);
+        if( port.value.name == product_name ) {
+            port.value.onmidimessage = _on_midi_message;
+            if( port.value.connection == "open" ) _midi_input_port = port.value;
+        }
+    }
+    for( var port = midi_outputs.next(); !port.done; port = midi_outputs.next()) {
+        if( port.value.name == product_name ) {
+            _midi_output_port = port.value;
+        }
+    }
+    _midi_output_port.send( _prop_to_midi( [0x0001,0,0,0,0,0] ));
+}
+
+function reload_page() { location.reload(); }
+
+function _update_param( object )
+{
+    console.log(object.target.id,object.target.value);
+    var key = object.target.id;
+    _settings[ parseInt( key.slice(5) ) ] = parseInt( object.target.value );
+    _update_interface();
+    //_midi_output_port.send( _prop_to_midi( _settings_to_prop( 0x0005, _settingsL )));
+}
+
+function _enable_interface()
+{
+    for( var ii = 0; ii < control_count; ++ii ) $('CNTRL_'+ii).disabled = false;
+    for( var ii = 0; ii < control_count; ++ii ) $('CNTRL_'+ii).oninput = _update_param;
+    for( var ii = 0; ii < control_count; ++ii ) $('INPUT_'+ii).style.background = control_colors[ii][0];
+    
+    window.onmousedown = function(event) {
+    };
+    window.onmouseup = function(event) {
+    };
+}
+
+function _disable_interface()
+{
+    for( var ii = 0; ii < control_count; ++ii ) $('CNTRL_'+ii.toString()).disabled = true;
+    for( var ii = 0; ii < control_count; ++ii )$('CNTRL_'+ii.toString()).oninput = function(ee){};
+    window.onmousedown = function(event) {};
+    window.onmouseup = function(event) {};
+}
+
+function refresh_interface1()
+{
+    if( _dfu_transfer_size != 0 )
+    {
+        setTimeout( refresh_interface2, 100 );
+        _midi_output_port.send(_prop_to_midi([0x0006,0,0,0,0,0]));
+    }
+}
+function refresh_interface2()
+{
+    if( _dfu_transfer_size != 0 )
+    {
+        setTimeout( refresh_interface1, 100 );
+        _midi_output_port.send(_prop_to_midi([0x0005,0,0,0,0,0]));
+    }
+}
+
+function property_to_text( prop )
+{
+    text = "";
+    for( var ii = 1; ii <= 5; ++ii )
+    {
+        if( ((prop[ii]>>24)&255) == 0 ) break; text += String.fromCharCode((prop[ii]>>24)&255);
+        if( ((prop[ii]>>16)&255) == 0 ) break; text += String.fromCharCode((prop[ii]>>16)&255);
+        if( ((prop[ii]>> 8)&255) == 0 ) break; text += String.fromCharCode((prop[ii]>> 8)&255);
+        if( ((prop[ii]>> 0)&255) == 0 ) break; text += String.fromCharCode((prop[ii]>> 0)&255);
+    }
+}
+
+function _on_midi_message( event )
+{
+    var property = _midi_to_prop( event.data );
+    if( property[0] == 0 ) return;
+    var opcode = property[0] & 0xFFFF;
+     
+    if( opcode == 0x0001 )
+    {
+        name = property_to_text( property );
+        console.log( name );
+                
+        if( name.slice(0,product_name.length) == product_name )
+        {
+            _midi_output_port.send(_prop_to_midi([0x0005,0,0,0,0,0]));
+            setTimeout( refresh_interface1, 100 );
+        }
+        else document.write( "Wrong controller for device '"+ product_name + "'."  );
+    }
+    else if( opcode == 0x0002 || opcode == 0x0003 )
+    {
+        if( _dfu_transfer_data.length > 0 )
+        {
+            var property = [0x0003,0,0,0,0,0];
+            
+            property[1] = array_to_ui4be( _dfu_transfer_data );
+            _dfu_transfer_data = _dfu_transfer_data.slice(4);
+            property[2] = array_to_ui4be( _dfu_transfer_data );
+            _dfu_transfer_data = _dfu_transfer_data.slice(4);
+            property[3] = array_to_ui4be( _dfu_transfer_data );
+            _dfu_transfer_data = _dfu_transfer_data.slice(4);
+            property[4] = array_to_ui4be( _dfu_transfer_data );
+            _dfu_transfer_data = _dfu_transfer_data.slice(4);
+            
+            _midi_output_port.send( _prop_to_midi( property ));
+            
+            if( _dfu_transfer_count == 0 || (_dfu_transfer_count % 16) == 0 )
+            {
+                progress = (1600.0 * _dfu_transfer_count) / _dfu_transfer_size;
+                if( progress > 99 ) progress = 99;
+                $('update').innerHTML = "XIO ... " + progress.toFixed(0) + "\%";
+            }
+            _dfu_transfer_count += 1;
+        }
+        else
+        {
+            _on_midi_connect_done = 0;
+            var property = [0x0004,0,0,0,0,0];
+            _midi_output_port.send( _prop_to_midi( property ));
+            setTimeout( reload_page, 1000 );
+        }
+    }
+    else if( opcode == 0x0005 )
+    {
+        _preset_number = property[1];
+        
+        if( _preset_number == 0 ) {
+            _disable_interface();
+            $('C99').style.opacity = 0.5;
+            $('update').disabled = false;
+        }
+        else {
+            _enable_interface();
+            $('C99').style.opacity = 1.0;
+            $('update').disabled = false;
+        }
+    }
+    else if( opcode == 0x0006 )
+    {
+        for( var ii = 0; ii < 3; ++ii )
+        {
+            _settings[4*ii+0] = (property[ii+1] >> 24) & 255;
+            _settings[4*ii+1] = (property[ii+1] >> 16) & 255;
+            _settings[4*ii+2] = (property[ii+1] >>  8) & 255;
+            _settings[4*ii+3] = (property[ii+1] >>  0) & 255;
+        }
+
+        for( var ii = 0; ii < control_count; ++ii ) $('CNTRL_'+ii.toString()).value = _settings[ii];
+        _update_interface();
+    }
+}
+
+function _settings_to_prop( id, data )
+{
+    var prop = [id,0,0,0,0,0];
+    prop[1] = (data[ 0]<<24) + (data[ 1]<<16) + (data[ 2]<<8) + data[ 3];
+    prop[2] = (data[ 4]<<24) + (data[ 5]<<16) + (data[ 6]<<8) + data[ 7];
+    prop[3] = (data[ 8]<<24) + (data[ 9]<<16) + (data[10]<<8) + data[11];
+    prop[4] = (data[12]<<24) + (data[13]<<16) + (data[14]<<8) + data[15];
+    prop[5] = (data[16]<<24) + (data[17]<<16) + (data[18]<<8) + data[19];
+    return prop;
+}
+
+function _prop_to_midi( property )
+{
+    var midi_data = [0xF0];
+    for( var ii = 0; ii < 6; ++ii )
+    {
+        midi_data.push( (property[ii]>>28)&15 ); midi_data.push( (property[ii]>>24)&15 );
+        midi_data.push( (property[ii]>>20)&15 ); midi_data.push( (property[ii]>>16)&15 );
+        midi_data.push( (property[ii]>>12)&15 ); midi_data.push( (property[ii]>> 8)&15 );
+        midi_data.push( (property[ii]>> 4)&15 ); midi_data.push( (property[ii]>> 0)&15 );
+    }
+    midi_data.push( 0xF7 );
+    return midi_data;
+}
+
+function _midi_to_prop( midi_data )
+{
+    var property = [0,0,0,0,0,0];
+        
+    if( midi_data.length < 50 ) return property;
+    if( midi_data[ 0] != 0xF0 ) return property;
+    if( midi_data[49] != 0xF7 ) return property;
+    
+    for( var ii = 0; ii < 6; ++ii )
+    {
+        property[ii] = (midi_data[8*ii+1]<<28) + (midi_data[8*ii+2]<<24)
+                     + (midi_data[8*ii+3]<<20) + (midi_data[8*ii+4]<<16)
+                     + (midi_data[8*ii+5]<<12) + (midi_data[8*ii+6]<< 8)
+                     + (midi_data[8*ii+7]<< 4) + (midi_data[8*ii+8]<< 0);
+    }
+    return property;
+}
+
+</script>
+
+<style>
+
+html { font-family: sans-serif; -ms-text-size-adjust: 100%; -webkit-text-size-adjust: 100%; }
+body { margin-top: 0px; margin-bottom: 0px; margin-left: 10px; margin-right: 10px; }
+
+button, input, optgroup, select, textarea { color: inherit; font: inherit; margin: 0; }
+button { overflow: visible; }
+button, select { text-transform: none; }
+
+button, html input[type="button"],
+input[type="reset"],
+input[type="submit"] { -webkit-appearance: button; cursor: pointer; }
+
+button[disabled], html input[disabled] { cursor: default; }
+
+.label0  { display:flex; color:#ccc; background-color:#000; border-color:#000; width:132px;}
+.preset1 { display:flex; align-items:center; justify-content:left; color:#ccc; background-color:#000; border-color:#000; width:96px; height:24px; font-weight:bold;}
+.label1  { display:flex; align-items:center; color:#ccc; background-color:#000; border-color:#000; width:120px; height:24px;}
+.stage1  { display:flex; align-items:center; color:#ccc; background-color:#000; border-color:#000; width:120px; height:24px; font-weight:bold;}
+
+.parameter { display:flex; flex-direction:column; align-items:bottom; justify-content:center; background-color:#000; border-color:#000; width:96px; height:24px;}
+
+.filename { display:flex; flex-direction:column; align-items:bottom; justify-content:left; color:#ccc; background-color:#000; border-color:#000;}
+
+.container { position: relative; width: 100%; margin: 0 0; padding: 0 0; }
+.column,
+.columns { width: 100%; float: left; box-sizing: border-box; padding: 0px;}
+
+html { font-size: 62.5%; }
+body {
+  font-size: 1.5em; line-height: 0.5; font-weight: 400;
+  font-family: "Raleway", "HelveticaNeue", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  background-color: #000; color:#CCC }
+
+h1, h2, h3, h4, h5, h6 { margin-top: 0; margin-bottom: 0rem; font-weight: 300; }
+h3 { font-size: 3.0rem; line-height: 1.0;  letter-spacing: -.1rem; }
+h5 { font-size: 1.8rem; line-height: 1.8;  letter-spacing: -.05rem; }
+
+button, html input[type="button"],
+input[type="reset"],
+input[type="submit"] { -webkit-appearance: button; cursor: pointer; }
+
+button[disabled], html input[disabled] { cursor: default; }
+
+.parameter { display:flex; flex-direction:column; align-items:bottom; justify-content:center;
+             background-color:#000; border-color:#000; width:84px; height:22px;}
+
+.filename { display:flex; flex-direction:column; align-items:bottom; justify-content:left; color:#ccc; background-color:#000; border-color:#000;}
+
+.button, button, select, input[type="button"]
+{
+  display:flex; align-items:center; justify-content:center;
+  -webkit-appearance: none; -webkit-transition: .2s;
+  height:34px; width:120px;
+  margin-top:0; margin-bottom:0;
+  font-size: 16px; font-weight: 500; text-decoration: none; white-space: nowrap;
+  outline: none;
+  border-radius: 3px; border: 0px solid #CCC;
+  cursor: pointer;
+  line-height:22px; letter-spacing: 0rem;
+  background: #555; opacity: 0.8; transition: opacity .2s; padding: 1px;
+}
+input.button:active, button:active,
+input[type="button"]:active { color: #EEE; background-color: #888; border-color: #CCC; }
+input.button:disabled, button:disabled,
+input[type="button"]:disabled { color: #777; background-color: #222; border-color: #777; outline: 0; }
+
+input.slider {
+    display:flex; align-items:center; justify-content:left;
+    -webkit-appearance: none; -webkit-transition: .2s;
+    width: 100%; height: 30px; outline: none;
+    border-radius: 3px; border: 1px solid #fff;
+    background: #999; opacity: 0.5; transition: opacity .2s; padding: 1px;
+    pointer-events: none;
+}
+input.slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none; opacity: 0.8; 
+    width:48px; height:28px;
+    border-radius: 3px; border: 1px solid #FFF;
+    background: #555;
+    cursor: pointer; pointer-events: auto;
+}
+input.slider::-webkit-slider-thumb:active { background-color: #ccc; border-color: #fff; opacity: 1.0; } {}
+
+</style>
+
+</html>
