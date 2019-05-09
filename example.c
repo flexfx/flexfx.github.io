@@ -3,7 +3,7 @@
 #include <string.h>
 #include "xio.h"
 
-const char* product_name_string   = "XIO";
+const char* product_name_string   = "Example";
 const int   audio_sample_rate     = 48000;
 const int   flexfx_unit_number    = 0;
 const int   audio_clock_mode      = 1; // 0=internal/master,1=external/master,2=slave
@@ -25,6 +25,8 @@ const int   i2s_sync_word[8]      = { 0xFFFFFFFF,0x00000000,0,0,0,0,0,0 };
 // AH (high) and AL (low) form the 64-bit signed accumulator
 // XX, YY, and AA are 32-bit QQQ fixed point values
 // PP is a ** 64-bit aligned **  pointer to two 32-bit QQQ values
+//
+// For CRC: YY and XX are the next and previous results, SS is the seed value, PP is the CRC polynomial.
 
 #define DSP_LD00( pp, xx, yy )    asm volatile("ldd %0,%1,%2[ 0]":"=r"(xx),"=r"(yy):"r"(pp));
 #define DSP_LD01( pp, xx, yy )    asm volatile("ldd %0,%1,%2[ 1]":"=r"(xx),"=r"(yy):"r"(pp));
@@ -56,17 +58,12 @@ const int   i2s_sync_word[8]      = { 0xFFFFFFFF,0x00000000,0,0,0,0,0,0 };
 #define DSP_MAC( ah, al, xx, yy ) asm volatile("maccs %0,%1,%2,%3":"=r"(ah),"=r"(al):"r"(xx),"r"(yy),"0"(ah),"1"(al) );
 #define DSP_EXT( ah, al, xx, qq ) asm volatile("lextract %0,%1,%2,%3,32":"=r"(xx):"r"(ah),"r"(al),"r"(QQ+qq));
 #define DSP_SAT( ah, al )         asm volatile("lsats %0,%1,%2":"=r"(ah),"=r"(al):"r"(QQ),"0"(ah),"1"(al));
-
 #define DSP_DIV( qq,rr,ah,al,xx ) asm volatile("ldivu %0,%1,%2,%3,%4":"=r"(qq):"r"(rr),"r"(ah),"r"(al),"r"(xx));
-#define DSP_CRC( nxt,prv,seed,poly ) asm volatile("crc32 %0,%2,%3":"=r"(nxt):"0"(prv),"r"(seed),"r"(poly));
+#define DSP_CRC( xx,yy,ss,pp )    asm volatile("crc32 %0,%2,%3":"=r"(xx):"0"(yy),"r"(ss),"r"(pp));
 
 inline int dsp_multiply( int xx, int yy ) // RR = XX * YY
 {
     int ah; unsigned al; DSP_MUL(ah,al,xx,yy); DSP_EXT(ah,al,xx,0); return xx;
-}
-inline int _multacc( int xx, int yy, int ah, unsigned al ) // RR = XX * YY + ZZ
-{
-    DSP_MAC(ah,al,xx,yy); DSP_EXT(ah,al,xx,0); return xx;
 }
 inline int dsp_extract( int ah, int al ) // RR = AH:AL >> (64-QQ)
 {
@@ -82,7 +79,7 @@ int dsp_blend( int dry, int wet, int blend ) // 0 (100% dry) <= MM <= 1 (100% we
     return ah;
 }
 
-inline int dsp_biquad( int xx, int* cc, int* ss )
+inline int dsp_biquad( int xx, int* cc, int* ss ) // Biquad 2nd-order IIR
 {
     unsigned al; int ah, b0,b1,b2,a1,a2, x1,x2,y1,y2, tmp;
     DSP_LD00( cc, b1, b0 );
@@ -94,7 +91,7 @@ inline int dsp_biquad( int xx, int* cc, int* ss )
     return ah;
 }
 
-inline int dsp_dcblock( int xx, int cc, int* ss )
+inline int dsp_dcblock( int xx, int cc, int* ss ) // One-pole high-pass DC blocking filter
 {
     int ah; unsigned al;
     DSP_MUL( ah, al, cc, ss[1] ); DSP_EXT( ah, al, ah,0 );
@@ -161,7 +158,7 @@ inline int dsp_dcblock( int xx, int cc, int* ss )
     xx = s0; \
 }
 
-int dsp_fir24( int xx, const int* cc, int* ss )
+int dsp_fir24( int xx, const int* cc, int* ss ) // 24-tap FIR
 {
     int c0, c1, s0 = xx, s1, s2, s3, ah = 0; unsigned al = 1<<(QQ-1);
 
@@ -193,7 +190,7 @@ int dsp_fir24( int xx, const int* cc, int* ss )
     DSP_EXT( ah, al, xx,0 ); return xx;
 }
 
-int lagrange_interp( int ff, int y1, int y2, int y3 )
+int lagrange_interp( int ff, int y1, int y2, int y3 ) // 2nd order Lagrange interpolation
 {
     unsigned al; int z1,z2,z3,ah, x0=ff, x1=ff-FQ(1.0), x2=ff-FQ(2.0);
     DSP_MUL( ah, al, x1, x2 ); DSP_EXT( ah, al, z1,1 );
@@ -205,7 +202,7 @@ int lagrange_interp( int ff, int y1, int y2, int y3 )
     return ah;
 }
 
-int dsp_negexp( int xx )
+int dsp_negexp( int xx ) // Base-e exponent: yy = 1 - e^(-8 * xx), 0 <= xx <= 1.0
 {
     static int lut[4][64] =
     {
@@ -249,7 +246,7 @@ int dsp_negexp( int xx )
     return yy;
 }
 
-int dsp_sin( int xx )
+int dsp_sin( int xx ) // SIN approximation: yy ~= sin( 2 * pi * xx ), 0.0 <= xx <= 1.0
 {
     xx *= 4;
     if( xx < FQ(1) )
@@ -326,7 +323,7 @@ void calc_emphasis( int* coeffs, double freq, double gain, double Q ) // Peaking
     coeffs[4] = FQ( -(1-alpha/A)/(1+alpha/A) );
 }
 
-void calc_lowshelf( int coeffs[5], double frequency, double gain, double Q )
+void calc_lowshelf( int coeffs[5], double frequency, double gain, double Q ) // Low-shelf filter
 {
     double A = pow( 10.0, (gain / 40.0) );
     double w0 = 2.0 * 3.14159265359 * (frequency/48000.0);
@@ -339,7 +336,7 @@ void calc_lowshelf( int coeffs[5], double frequency, double gain, double Q )
     coeffs[4] = FQ( -((A+1)+(A-1)*cos(w0)-2*sqrt(A)*alpha)     / a0 );
 }
 
-void calc_highshelf( int coeffs[5], double frequency, double gain, double Q )
+void calc_highshelf( int coeffs[5], double frequency, double gain, double Q ) // High-shelf filter
 {
     double A  = pow( 10.0, (gain / 40.0) );
     double w0 = 2.0 * 3.14159265359 * (frequency/48000.0);
@@ -357,34 +354,12 @@ double calc_dcblock_192( double freq ) // 1-pole high-pass filter coefficient.
     return pow( 2.718281828459045, -2 * 3.141592653589793 * freq / 192000.0 );
 }
 
-void _property_get_data( const int property[6], byte data[25] )
+static byte _presets_data[256], _presets_num = 7, _presets_init[22] =
 {
-	for( int nn = 0; nn < 5; ++nn ) {
-		data[5*nn+0] = (byte)((property[nn+1] >> 24) & 63);
-		data[5*nn+1] = (byte)((property[nn+1] >> 18) & 63);
-		data[5*nn+2] = (byte)((property[nn+1] >> 12) & 63);
-		data[5*nn+3] = (byte)((property[nn+1] >>  6) & 63);
-		data[5*nn+4] = (byte)((property[nn+1] >>  0) & 63);
-	}
-}
-
-void _property_set_data( int property[6], const byte data[25] )
-{
-	for( int nn = 0; nn < 5; ++nn ) {
-		property[nn+1] = (((unsigned)data[5*nn+0])<<24)
-					   + (((unsigned)data[5*nn+1])<<18)
-					   + (((unsigned)data[5*nn+2])<<12)
-					   + (((unsigned)data[5*nn+3])<< 6)
-					   + (((unsigned)data[5*nn+4])<< 0);
-	}
-}
-
-static byte _presets_data[256], _presets_num = 7, _presets_init[20] =
-{
-//  Preamp          EQ                 Delay        Reverb    Output
-//  LC G  MG MF HC  UG UF MG MF LG LF  T  R  D  B   R  D  B   VO IR
-//  00              05                 11           15        18 19
-    32,32,32,32,32, 32,32,32,32,32,32, 32,32,32,32, 32,32,32, 32,01
+//  Preamp          EQ                 Delay           Reverb    Output
+//  LC G  MG MF HC  UG UF MG MF LG LF  T  R  D  F  B   R  D  B   IR BA VO
+//  00              05                 11              16        19 20 21
+    50,50,50,50,50, 50,50,50,50,50,50, 50,50,50,50,50, 50,50,50, 50,50,01
 };
 
 void xio_startup( void )
@@ -395,7 +370,7 @@ void xio_startup( void )
     if( _presets_data[253] != 'X' || _presets_data[254] != 'I' || _presets_data[255] != 'O' )
     {
         // No preset data, initialize all 12 presets to defaults and update FLASH memory.
-        for( int ii = 0; ii < 12; ++ii ) memcpy( _presets_data+20*ii, _presets_init, 20 );
+        for( int ii = 0; ii < 12; ++ii ) memcpy( _presets_data+20*ii, _presets_init, 22 );
         // Write a signature and update FLASH.
         _presets_data[253] = 'X'; _presets_data[254] = 'I'; _presets_data[255] = 'O';
         flash_write( 1, _presets_data );
@@ -416,89 +391,94 @@ void xio_control( const int rcv_prop[6], int snd_prop[6], int dsp_prop[6] )
     //    button2 = 10;
     //}
     //if( button2 > 0 && knobs[0] > 0.5 ) --button2;
-
+    
     static int refresh = 0; // Limits the rate of FLASH updates.
     
     // Pointer to the current set of preset parameters.
     static byte *params; params = _presets_data + 20 * _presets_num;
 
-    if( rcv_prop[0] == 0x0005 )
+    if( rcv_prop[0] == 0x0005 ) // Read command from USB host.
     {
-        snd_prop[0] = rcv_prop[0];
-        if( rcv_prop[1] != 0 ) _property_get_data( rcv_prop, params );
-        if( rcv_prop[1] != 0 && refresh == 0 ) refresh = 1000;
-        _property_set_data( snd_prop, params );
+        snd_prop[0] = 0x0005;
+        int index = rcv_prop[1]; if( index > 21 ) index = 21; snd_prop[1] = index;
+        int value = rcv_prop[2]; if( value > 99 ) value = 99; snd_prop[2] = params[index];
         return;
     }
-    else if( rcv_prop[0] == 0x0009 )
+    if( rcv_prop[0] == 0x0006 ) // Write command from USB host.
     {
-        snd_prop[0] = rcv_prop[0]; snd_prop[1] = _presets_num;
+        snd_prop[0] = 0x0005;
+        int index = rcv_prop[1]; if( index > 21 ) index = 21; snd_prop[1] = index;
+        int value = rcv_prop[2]; if( value > 99 ) value = 99; snd_prop[2] = value;
+        params[index] = value;
+        if( rcv_prop[1] != 0 && refresh == 0 ) refresh = 1000;
         return;
     }
     
     if( refresh > 0 ) if( --refresh == 0 ) { flash_write( 1, _presets_data ); }
 
     static int state = 1; dsp_prop[0] = state;
-    if( state == 1 ) // Preamp pre-gain low-cut (2), and Cab IR selection (19)
+    if( state == 1 ) // Preamp pre-gain low-cut (2)
     {
         // DC blocker (1-pole low pass filter) coefficients for 10Hz - 50/100/200 Hz. 
-        dsp_prop[1] = FQ( calc_dcblock_192( scale_lin( params[1], 10, 50 )));
-        dsp_prop[2] = FQ( calc_dcblock_192( scale_lin( params[1], 10,100 )));
-        dsp_prop[3] = FQ( calc_dcblock_192( scale_lin( params[1], 10,200 )));
+        dsp_prop[1] = FQ( calc_dcblock_192( scale_lin( params[1]/100.0, 10, 50 )));
+        dsp_prop[2] = FQ( calc_dcblock_192( scale_lin( params[1]/100.0, 10,100 )));
+        dsp_prop[3] = FQ( calc_dcblock_192( scale_lin( params[1]/100.0, 10,200 )));
     }
     else if( state == 2 ) // Preamp mid-range emphasis (2,3) and stage gain (1)
     {
         // Peaking filter with adjustable gain and frequency, Q = 0.707.
-        calc_emphasis( dsp_prop+1, scale_log(params[3]/64.0,300,1200),
-                                   scale_lin(params[2]/64.0,0,+12), 0.707 );
+        calc_emphasis( dsp_prop+1, scale_log(params[3]/100.0,300,1200),
+                                   scale_lin(params[2]/100.0,0,+12), 0.707 );
         // Modify the filter coefficients to incorporate the preamp stage gain level.
-        int gain = FQ( scale_lin( params[1]/64.0, 0.200, 0.700 ));
+        int gain = FQ( scale_lin( params[1]/100.0, 0.200, 0.700 ));
         dsp_prop[1] = dsp_multiply( dsp_prop[1], gain );
         dsp_prop[2] = dsp_multiply( dsp_prop[2], gain );
         dsp_prop[3] = dsp_multiply( dsp_prop[3], gain );
     }
-    else if( state == 3 ) // Preamp post-gain high-cut (4) and master volume (18)
+    else if( state == 3 ) // Preamp post-gain high-cut (4) and master volume (21)
     {
         // Low-pass filter with adjustable gain and frequency, Q = 0.707.
-        calc_lowpass( dsp_prop+1, scale_log(params[4]/64.0,3000,11000), 0.707 );
+        calc_lowpass( dsp_prop+1, scale_log(params[4]/100.0,3000,11000), 0.707 );
         // Modify the filter coefficients to incorporate the master volume level.
-        int volume = FQ( scale_lin( params[18]/64.0, 0.00, 0.99 ));
+        int volume = FQ( scale_lin( params[21]/100.0, 0.00, 0.99 ));
         dsp_prop[1] = dsp_multiply( dsp_prop[1], volume );
         dsp_prop[2] = dsp_multiply( dsp_prop[2], volume );
         dsp_prop[3] = dsp_multiply( dsp_prop[3], volume );
     }
     else if( state == 4 ) // 3-Band Semi-Parametric EQ: Lower Mids (5,6)
     {
-        calc_lowshelf( dsp_prop+1, scale_log(params[6]/64.0,190,425),
-                                   scale_lin(params[5]/64.0,-18,+18), 1.0 );
+        calc_lowshelf( dsp_prop+1, scale_log(params[6]/100.0,190,425),
+                                   scale_lin(params[5]/100.0,-18,+18), 1.0 );
     }
     else if( state == 5 ) // 3-Band Semi-Parametric EQ: Middle Frequencies (7,8)
     {
-        calc_peaking( dsp_prop+1, scale_log(params[8]/64.0,640,1440),
-                                  scale_lin(params[7]/64.0,-12,+12), 0.707 );
+        calc_peaking( dsp_prop+1, scale_log(params[8]/100.0,640,1440),
+                                  scale_lin(params[7]/100.0,-12,+12), 0.707 );
     }
     else if( state == 6 ) // 3-Band Semi-Parametric EQ: Upper Mids (9,10)
     {
-        calc_highshelf( dsp_prop+1, scale_log(params[10]/64.0,2160,4860),
-                                    scale_lin(params[9]/64.0,-12,+12), 0.707 );
+        calc_highshelf( dsp_prop+1, scale_log(params[10]/100.0,2160,4860),
+                                    scale_lin(params[9]/100.0,-12,+12), 0.707 );
     }
     else if( state == 7 ) // Chorus delay time, depth, rate, blend (11,12,13,14)
     {
-        dsp_prop[1] = FQ( scale_lin( params[11], 0.0, 0.9000 )); // Time
-        dsp_prop[2] = FQ( scale_lin( params[12], 0.0, 0.0999 )); // Depth
-        dsp_prop[3] = FQ( scale_lin( params[13], 0.0, 1.3/48000 )); // Rate
-        dsp_prop[4] = FQ( scale_lin( params[14], 0.0, 0.5 ));// Blend
+        dsp_prop[1] = FQ( scale_lin( params[11]/100.0, 0.0, 0.9000 )); // Time
+        dsp_prop[2] = FQ( scale_lin( params[12]/100.0, 0.0, 0.0999 )); // Depth
+        dsp_prop[3] = FQ( scale_lin( params[13]/100.0, 0.0, 1.3/48000 )); // Rate
+        dsp_prop[4] = FQ( scale_lin( params[14]/100.0, 0.0, 0.5 ));// Feedback
+        dsp_prop[5] = FQ( scale_lin( params[15]/100.0, 0.0, 0.5 ));// Blend
     }
     else if( state == 8 ) // Reverb reflectivity, damping, and blend (15,16,17)
     {
-        dsp_prop[1] = FQ( params[15]/64.0 ); // Reflectivity
-        dsp_prop[2] = FQ( 1.0 - params[16]/64.0 ); // Damping
-        dsp_prop[3] = FQ( params[17]/64.0 ); // Wet/dry blend
+        dsp_prop[1] = FQ( params[16]/100.0 ); // Reflectivity
+        dsp_prop[2] = FQ( 1.0 - params[17]/100.0 ); // Damping
+        dsp_prop[3] = FQ( params[18]/100.0 ); // Wet/dry blend
     }
     else if( state == 9 ) // Preset number and Cabinet IR selection (19)
     {
         dsp_prop[1] = _presets_num; // The current preset number
         dsp_prop[2] = params[19] <= 3 ? params[19] : 0;
+        dsp_prop[3] = 0; // params[20] Balance
     }
     if( ++state > 9 ) state = 1;
 }
@@ -513,31 +493,18 @@ void xio_mixer( const int usb_output_q31[2], int usb_input_q31[2],
     dac_input_q31[16] = dac_input_q31[17] = (preset==2||preset==4||preset==5||preset==7) ? -1 : 0;
     dac_input_q31[24] = dac_input_q31[25] = (preset==3||preset==5||preset==6||preset==7) ? -1 : 0;
 
-    // Filter out high frequency noise (above 8 kHz) from the guitar/instrument input.
-    static int fir[8] = { 0,0,0,0,0,0,0,0 };
-    // FIR filter; shift sample history/FIFO (this is the 'slow' way).
-    fir[7] = fir[6]; fir[6] = fir[5]; fir[5] = fir[4]; 
-    fir[4] = fir[3]; fir[3] = fir[2]; fir[2] = fir[1]; 
-    fir[1] = fir[0]; fir[0] = adc_output_q31[0] / 8;
-    // FIR filter; convole the next audio cycle (slow but good enough)
-    int input_q28 = ( dsp_multiply( fir[0], FQ(+0.00118311268) )
-                  +   dsp_multiply( fir[1], FQ(-0.04842514672) )
-                  +   dsp_multiply( fir[2], FQ(+0.05915791697) )
-                  +   dsp_multiply( fir[3], FQ(+0.48808411707) )
-                  +   dsp_multiply( fir[4], FQ(+0.48808411707) )
-                  +   dsp_multiply( fir[5], FQ(+0.05915791697) )
-                  +   dsp_multiply( fir[6], FQ(-0.04842514672) )
-                  +   dsp_multiply( fir[7], FQ(+0.00118311268) ));
-    
+    int input_q31 = adc_output_q31[1]/2 - adc_output_q31[0]/2;
+    int input_q28 = input_q31 / 8;
+
     // Guitar/instrument monitoring/recording via USB audio in.
-    usb_input_q31[0] = usb_input_q31[1] = input_q28 * 8;
+    usb_input_q31[0] = usb_input_q31[1] = input_q31;
     // Send guitar/instrument signal to the DSP threads.
     dsp_input_q28[0] = input_q28;
 
     // Mix the DSP result with USB audio output and send to line-out (the DAC).
     // Bypass the DSP if the preset number is 0.
     dac_input_q31[0] = preset==0 ? 8*input_q28 : usb_output_q31[0]/8 + dsp_output_q28[0]*8 / 8;
-    dac_input_q31[1] = preset==0 ? 8*input_q28 : usb_output_q31[1]/8 + dsp_output_q28[1]*8 / 8;
+    dac_input_q31[1] = preset==0 ? 8*input_q28 : usb_output_q31[1]/8 + dsp_output_q28[0]*8 / 8;
 }
 
 void xio_initialize( void ) {}
@@ -598,8 +565,15 @@ int preamp_dnsample_ss[96], preamp_dnsample_cc[96] = // FIR 192k 16.1k 24k -64
     FQ(-0.00019491985),FQ(-0.00018383221),FQ(-0.00010484502),FQ(-0.00002259174)
 };
 
-int preamp_transfer( int xx )
+int preamp_softclip( int xx )
 {
+    // dsp_negexp(xx) = 1 - e^(-8 * xx), 0 <= xx <= 1.0
+    //
+    // Y = 8 * X                 for  X <= 1/16
+    // Y = G(2*X-1/8)/2 + 0.5    for  1/16 < X < 9/16  where  G(x) = dsp_negexp(xx)
+    // Y = (1-e^(1-16*X))/2+0.5  for  1/16 < X < 9/16
+    // Y = 1.0                   for  X >= 9/16    
+    
     int yy = FQ(1.0) - dsp_negexp(2*xx-FQ(1.0/8)) / 8;
     if( xx <= FQ(0.5/8) ) yy = 8 * xx;
     if( xx >= FQ(4.5/8) ) yy = FQ(1.0);
@@ -642,14 +616,14 @@ void xio_thread1( int samples[32], const int property[6] )
     samples[1] = dsp_biquad( samples[1], preamp_emph_cc, preamp1_emph_ss );
     samples[0] = dsp_biquad( samples[0], preamp_emph_cc, preamp1_emph_ss );
     
-    if(  samples[3] < 0 ) samples[3] = +preamp_transfer( -samples[3] );
-    else                  samples[3] = -preamp_transfer( +samples[3] );
-    if(  samples[2] < 0 ) samples[2] = +preamp_transfer( -samples[2] );
-    else                  samples[2] = -preamp_transfer( +samples[2] );
-    if(  samples[1] < 0 ) samples[1] = +preamp_transfer( -samples[1] );
-    else                  samples[1] = -preamp_transfer( +samples[1] );
-    if(  samples[0] < 0 ) samples[0] = +preamp_transfer( -samples[0] );
-    else                  samples[0] = -preamp_transfer( +samples[0] );
+    if(  samples[3] < 0 ) samples[3] = +preamp_softclip( -samples[3] );
+    else                  samples[3] = -preamp_softclip( +samples[3] );
+    if(  samples[2] < 0 ) samples[2] = +preamp_softclip( -samples[2] );
+    else                  samples[2] = -preamp_softclip( +samples[2] );
+    if(  samples[1] < 0 ) samples[1] = +preamp_softclip( -samples[1] );
+    else                  samples[1] = -preamp_softclip( +samples[1] );
+    if(  samples[0] < 0 ) samples[0] = +preamp_softclip( -samples[0] );
+    else                  samples[0] = -preamp_softclip( +samples[0] );
     
     samples[3] = dsp_dcblock( samples[3], block1, preamp1_state+2 );
     samples[2] = dsp_dcblock( samples[2], block1, preamp1_state+2 );
@@ -663,14 +637,14 @@ void xio_thread1( int samples[32], const int property[6] )
     samples[1] = dsp_biquad( samples[1], preamp_emph_cc, preamp2_emph_ss );
     samples[0] = dsp_biquad( samples[0], preamp_emph_cc, preamp2_emph_ss );
     
-    if(  samples[3] < 0 ) samples[3] = +preamp_transfer( -samples[3] );
-    else                  samples[3] = -preamp_transfer( +samples[3] );
-    if(  samples[2] < 0 ) samples[2] = +preamp_transfer( -samples[2] );
-    else                  samples[2] = -preamp_transfer( +samples[2] );
-    if(  samples[1] < 0 ) samples[1] = +preamp_transfer( -samples[1] );
-    else                  samples[1] = -preamp_transfer( +samples[1] );
-    if(  samples[0] < 0 ) samples[0] = +preamp_transfer( -samples[0] );
-    else                  samples[0] = -preamp_transfer( +samples[0] );
+    if(  samples[3] < 0 ) samples[3] = +preamp_softclip( -samples[3] );
+    else                  samples[3] = -preamp_softclip( +samples[3] );
+    if(  samples[2] < 0 ) samples[2] = +preamp_softclip( -samples[2] );
+    else                  samples[2] = -preamp_softclip( +samples[2] );
+    if(  samples[1] < 0 ) samples[1] = +preamp_softclip( -samples[1] );
+    else                  samples[1] = -preamp_softclip( +samples[1] );
+    if(  samples[0] < 0 ) samples[0] = +preamp_softclip( -samples[0] );
+    else                  samples[0] = -preamp_softclip( +samples[0] );
     
     samples[3] = dsp_dcblock( samples[3], block2, preamp2_state+2 );
     samples[2] = dsp_dcblock( samples[2], block2, preamp2_state+2 );
@@ -684,14 +658,14 @@ void xio_thread1( int samples[32], const int property[6] )
     samples[1] = dsp_biquad( samples[1], preamp_emph_cc, preamp3_emph_ss );
     samples[0] = dsp_biquad( samples[0], preamp_emph_cc, preamp3_emph_ss );
     
-    if(  samples[3] < 0 ) samples[3] = +preamp_transfer( -samples[3] );
-    else                  samples[3] = -preamp_transfer( +samples[3] );
-    if(  samples[2] < 0 ) samples[2] = +preamp_transfer( -samples[2] );
-    else                  samples[2] = -preamp_transfer( +samples[2] );
-    if(  samples[1] < 0 ) samples[1] = +preamp_transfer( -samples[1] );
-    else                  samples[1] = -preamp_transfer( +samples[1] );
-    if(  samples[0] < 0 ) samples[0] = +preamp_transfer( -samples[0] );
-    else                  samples[0] = -preamp_transfer( +samples[0] );
+    if(  samples[3] < 0 ) samples[3] = +preamp_softclip( -samples[3] );
+    else                  samples[3] = -preamp_softclip( +samples[3] );
+    if(  samples[2] < 0 ) samples[2] = +preamp_softclip( -samples[2] );
+    else                  samples[2] = -preamp_softclip( +samples[2] );
+    if(  samples[1] < 0 ) samples[1] = +preamp_softclip( -samples[1] );
+    else                  samples[1] = -preamp_softclip( +samples[1] );
+    if(  samples[0] < 0 ) samples[0] = +preamp_softclip( -samples[0] );
+    else                  samples[0] = -preamp_softclip( +samples[0] );
     
     samples[3] = dsp_dcblock( samples[3], block3, preamp3_state+2 );
     samples[2] = dsp_dcblock( samples[2], block3, preamp3_state+2 );
@@ -700,7 +674,7 @@ void xio_thread1( int samples[32], const int property[6] )
 
     // Downsample x4 from 192 kHz to 48 kHz (96 taps, decimate by 4).
     
-    memmove( preamp_dnsample_ss+4, preamp_dnsample_ss, 4*(96-4) );
+    memmove( preamp_dnsample_ss+4, preamp_dnsample_ss, (96-4)*sizeof(int) );
     preamp_dnsample_ss[0] = samples[0]; preamp_dnsample_ss[1] = samples[1];
     preamp_dnsample_ss[2] = samples[2]; preamp_dnsample_ss[3] = samples[3];
     int ah = 0; unsigned al = 1<<(QQ-1);
@@ -709,6 +683,8 @@ void xio_thread1( int samples[32], const int property[6] )
     dsp_power24( ah,al, preamp_dnsample_cc+48, preamp_dnsample_ss+48);
     dsp_power24( ah,al, preamp_dnsample_cc+72, preamp_dnsample_ss+72);
     DSP_EXT( ah, al, samples[0],0 );
+
+    samples[0] = samples[0] / 3;
 }
 
 int tone_hcut_cc[6] = { 0,0,0,0,0,0 }, tone_hcut_ss[4] = { 0,0,0,0 };
@@ -789,8 +765,11 @@ void xio_thread2( int samples[32], const int property[6] )
 
     // Chorus (add feedback and lower the delay time to make a flanger).
     
-    static int delay = FQ(0.5), rate = FQ(1.0/48000), depth = FQ(0.1), blend = FQ(0.5);
-    if( property[0] == 7 ) { delay=property[1]; depth=property[2]; rate=property[3]; blend=property[4]; }
+    static int delay = FQ(0.5), rate = FQ(1.0/48000), depth = FQ(0.1), fback = 0, blend = FQ(0.5);
+    if( property[0] == 7 ) {
+        delay = property[1]; depth = property[2]; rate = property[3];
+        fback = property[4]; blend = property[5];
+    }
 
     static int angle = FQ(0.0); angle += rate; if(angle >= FQ(1.0)) angle -= FQ(1.0);
     static int delay_buf[2048], delay_idx = 0; delay_buf[--delay_idx & 2047] = samples[0];
@@ -839,8 +818,6 @@ void xio_thread2( int samples[32], const int property[6] )
     _REVERB_DELAY  ( tankB, _tankB_delay2_buf, _tankB_delay2_idx );
 
     samples[0] = dsp_blend( samples[0], 2*tankB, mix/2 );
-
-    samples[0] = samples[0] / 64;
 }
 
 int _ampsim_data[3][1728];
@@ -848,6 +825,7 @@ int _ampsim_ir_ss[1728], _ampsim_ir_cc[1728] = {FQ(1.0)}, _ampsim_ir1_nn=0, _amp
 
 void xio_thread3( int samples[32], const int property[6] )
 {
+    return;
     // Update the current IR coefficients array based on the current IR selection/number.
     
     if( property[0] == 9 ) _ampsim_ir1_nn = property[2]; // The IR number (0=none)
@@ -896,6 +874,7 @@ void xio_thread3( int samples[32], const int property[6] )
 
 void xio_thread4( int samples[32], const int property[6] )
 {
+    return;
     // Cabsim / IR convolution (second 12 msec of 36 msec total).
     
     unsigned al=samples[2]; int ah=samples[1], b0,b1,s0,s1,s2,s3, xx=samples[0];
@@ -930,6 +909,7 @@ void xio_thread4( int samples[32], const int property[6] )
 
 void xio_thread5( int samples[32], const int property[6] )
 {
+    return;
     // Cabsim / IR convolution (third 12 msec of 36 msec total).
     
     unsigned al=samples[2]; int ah=samples[1], b0,b1,s0,s1,s2,s3, xx=samples[0];
