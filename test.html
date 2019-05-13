@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+
+<html lang="en">
+
+<script>
+
+var product_name = 'C99';
+
+var control_labels =
+[
+    "PREAMP - PRE LOW-CUT", "PREAMP - STAGE GAIN",
+    "PREAMP - MID EMPHASIS", "PREAMP - EMPH FREQ", "PREAMP - POST HIGH-CUT",
+    "TONE - LOWER GAIN", "TONE - LOWER FREQ",
+    "TONE - MIDDLE GAIN", "TONE - MIDDLE FREQ",
+    "TONE - UPPER GAIN", "TONE - UPPER FREQ",
+    "DELAY - COUNT", "DELAY - DELAY TIME", "DELAY - MOD RATE", "DELAY - MOD DEPTH",
+    "DELAY - FEEDBACK", "DELAY - DAMPING", "DELAY - DIFFUSION", "DELAY - WET/DRY MIX",
+    "OUTPUT - CAB IR", "OUTPUT - SEPARATION", "OUTPUT - VOLUME"
+];
+
+var control_ranges =
+[
+    [1,99,50], [1,99,50], [1,99,50], [1,99,50], [1,99,50], // Preamp
+    [1,99,50], [1,99,50], [1,99,50], [1,99,50], [1,99,50], [1,99,50], // Tone
+    [0,8,0], [1,99,0], [1,99,0], [1,99,0], // Delay
+    [1,99,50], [1,99,50], [1,99,50], [1,99,50], // Delay
+    [0, 9, 0], [1,99,50], [1,99,50] // Output
+];
+
+var control_colors =
+[
+    ['#E87','#FFF'], ['#E87','#FFF'], ['#E87','#FFF'], ['#E87','#FFF'], ['#E87','#FFF'], // Preamp
+    ['#CC4','#FFF'], ['#CC4','#FFF'], ['#CC4','#FFF'], ['#CC4','#FFF'], ['#CC4','#FFF'], ['#CC4','#FFF'], // Tone
+    ['#8AE','#FFF'], ['#8AE','#FFF'], ['#8AE','#FFF'], ['#8AE','#FFF'], ['#8AE','#FFF'], // Delay
+    ['#8AE','#FFF'], ['#8AE','#FFF'], ['#8AE','#FFF'], // Delay
+    ['#8DA','#FFF'], ['#8DA','#FFF'], ['#8DA','#FFF'], // Reverb
+];
+
+var support_stereo = 0;
+
+var control_count  = control_labels.length;
+
+</script>
+
+<head>
+  <meta charset="utf-8">
+  <title>C99</title>
+  <meta name="description" content="">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+
+<body>
+
+<div class='container' id='main' style='display:block; opacity:1.0;'>
+  <div class='row'>
+    <div class='column' style='margin-top:0%;' id='controls'></div>
+  </div>
+</div>
+
+</body>
+
+<script>var $ = function(id) { return document.getElementById(id); };</script>
+
+<script>
+
+window.addEventListener('load', function()
+{    
+    if(navigator.requestMIDIAccess) {
+        navigator.requestMIDIAccess({sysex:true}).then(_on_midi_success,_on_midi_failure);
+    }
+    var text = "";
+    text += "<div style='height:8px;'></div>";
+    text += "<div style='display:flex; flex-direction:row; '>";
+    text += "<div style='display:flex; justify-content:left'><h3>";
+    text += product_name + "</h5></div>";
+    text += "<div style='width:24px;'></div>";
+    text += "<div style='display:flex; justify-content: center;'><input type='file' style='display:none' id='upload'/><button id='update'>Update</button></div>";
+    if( support_stereo ) {
+        text += "<div style='width:12px;'></div>";
+        text += "<div style='display:flex; justify-content: center;'><button id='side'>Left</button></div>";
+    }
+    text += "</div>";
+    text += "<div style='height:8px;'></div>";
+    for( var ii = 0; ii < control_labels.length && ii < control_ranges.length; ++ii ) {
+        text += "<div style='height:34px; width:100%; justify-content:bottom; position:relative;' id='CNTRL_"+ii+"'>";        
+        text += "<div style='display:flex; position:absolute; padding-left:12px; width:100%;'>";
+        text += "<h5 style='pointer-events:none; width:100%; align-items:center;" + "color:" + control_colors[ii][1] + "' id='LABEL_" + ii + "'>" + control_labels[ii] + "</h5>";
+        text += "<h5 style='pointer-events: none; " + "color:" + control_colors[ii][1] + "' id='VALUE_" + ii + "'>" + "01" + "</h5>";
+        text += "<div style='width:20px;'></div></div>"; 
+        var type = 1, min = control_ranges[ii][0], max = control_ranges[ii][1], val = control_ranges[ii][2];
+        text += "<input style='position:absolute;' class='slider' type='range' min='"+min+"' max='"+max+"' value='"+val+"' step='1' id='INPUT_"+ii+"'></input>";
+        text += "</div>";
+        text += "<div style='height:0px;'></div>";
+    }
+    text += "</div>";
+    $('controls').innerHTML = text;
+
+    $('update').onclick = function(ee) { $('upload').click(); };
+    $('upload').oninput = _write_firmware;
+});
+
+var _midi_input_port = 0, _midi_output_port = 0;
+var _dfu_transfer_count = 0, _dfu_transfer_data = 0, _dfu_transfer_size = 0;
+var _refresh_index = 0;
+
+function array_to_ui1  (a) { return a[0]; }
+function array_to_ui2be(a) { return a[1]+256*a[0]; }
+function array_to_ui2le(a) { return a[0]+256*a[1]; }
+function array_to_ui4be(a) { return 16777216*a[0]+65536*a[1]+256*a[2]+a[3]; }
+function array_to_ui4le(a) { return a[0]+256*a[1]+65536*a[2]+16777216*a[3]; }
+
+function _on_midi_success( midiAccess )
+{
+    midiAccess.onstatechange = _on_midi_connect;
+    var event = new Object();
+    event.currentTarget = midiAccess;
+    _on_midi_connect( event );
+}
+
+function _on_midi_failure( error ) {  _disable_interface(); }
+
+function _on_midi_connect( event )
+{
+    _disable_interface();
+    
+    var midi_access  = event.currentTarget;
+    var midi_inputs  = event.currentTarget.inputs.values ();
+    var midi_outputs = event.currentTarget.outputs.values();
+
+    for( var port = midi_inputs.next(); !port.done; port = midi_inputs.next() ) {
+        if( port.value.name == product_name ) {
+            port.value.onmidimessage = _on_midi_message;
+            if( port.value.connection == "open" ) _midi_input_port = port.value;
+        }
+    }
+    for( var port = midi_outputs.next(); !port.done; port = midi_outputs.next()) {
+        if( port.value.name == product_name ) {
+            _midi_output_port = port.value;
+        }
+    }
+    _midi_output_port.send( _prop_to_midi( [0x0001,0,0,0,0,0] ));
+}
+
+function reload_page() { location.reload(); }
+
+function _enable_interface()
+{
+    for( var ii = 0; ii < control_count; ++ii ) $('CNTRL_'+ii).disabled = false;
+    for( var ii = 0; ii < control_count; ++ii ) $('CNTRL_'+ii).oninput = _update_param;
+    for( var ii = 0; ii < control_count; ++ii ) $('INPUT_'+ii).style.background = control_colors[ii][0];
+    
+    window.onmousedown = function(event) {};
+    window.onmouseup = function(event) {};
+}
+
+function _disable_interface()
+{
+    for( var ii = 0; ii < control_count; ++ii ) $('CNTRL_'+ii.toString()).disabled = true;
+    for( var ii = 0; ii < control_count; ++ii ) $('CNTRL_'+ii.toString()).oninput = function(ee){};
+    window.onmousedown = function(event) {};
+    window.onmouseup = function(event) {};
+}
+
+function _update_param( object )
+{
+    var index = parseInt( object.target.id.slice(6) );
+    var value = parseInt( object.target.value );
+    _midi_output_port.send( _prop_to_midi( [0x0006,index,value,0,0,0] ));
+}
+
+function property_to_text( prop )
+{
+    var text = "";
+    for( var ii = 2; ii <= 5; ++ii )
+    {
+        if( ((prop[ii]>>24)&255) == 0 ) break; text += String.fromCharCode((prop[ii]>>24)&255);
+        if( ((prop[ii]>>16)&255) == 0 ) break; text += String.fromCharCode((prop[ii]>>16)&255);
+        if( ((prop[ii]>> 8)&255) == 0 ) break; text += String.fromCharCode((prop[ii]>> 8)&255);
+        if( ((prop[ii]>> 0)&255) == 0 ) break; text += String.fromCharCode((prop[ii]>> 0)&255);
+    }
+    return text;
+}
+
+function _on_midi_message( event )
+{
+    var property = _midi_to_prop( event.data );
+    if( property[0] == 0 ) return;
+    var opcode = property[0] & 0xFFFF;
+    
+    if( opcode == 0x0001 )
+    {
+        name = property_to_text( property );
+        if( name.slice(0,product_name.length) == product_name )
+        {
+            _enable_interface();
+            _refresh_index = 0;
+            _midi_output_port.send(_prop_to_midi([0x0005,0,0,0,0,0]));
+        }
+        else document.write( "Wrong controller for device '"+ product_name + "'."  );
+    }
+    else if( opcode == 0x0002 || opcode == 0x0003 )
+    {
+        if( _dfu_transfer_data.length > 0 )
+        {
+            var property = [0x0003,0,0,0,0,0];
+            
+            property[1] = array_to_ui4be( _dfu_transfer_data );
+            _dfu_transfer_data = _dfu_transfer_data.slice(4);
+            property[2] = array_to_ui4be( _dfu_transfer_data );
+            _dfu_transfer_data = _dfu_transfer_data.slice(4);
+            property[3] = array_to_ui4be( _dfu_transfer_data );
+            _dfu_transfer_data = _dfu_transfer_data.slice(4);
+            property[4] = array_to_ui4be( _dfu_transfer_data );
+            _dfu_transfer_data = _dfu_transfer_data.slice(4);
+            
+            _midi_output_port.send( _prop_to_midi( property ));
+            
+            if( _dfu_transfer_count == 0 || (_dfu_transfer_count % 16) == 0 )
+            {
+                progress = (1600.0 * _dfu_transfer_count) / _dfu_transfer_size;
+                if( progress > 99 ) progress = 99;
+                $('update').innerHTML = "" + progress.toFixed(0) + "\%";
+            }
+            _dfu_transfer_count += 1;
+        }
+        else
+        {
+            _on_midi_connect_done = 0;
+            var property = [0x0004,0,0,0,0,0];
+            _midi_output_port.send( _prop_to_midi( property ));
+            setTimeout( reload_page, 1000 );
+        }
+    }
+    else if( opcode == 0x0005 )
+    {
+        var index = property[1], value = property[2];
+        $('INPUT_'+index.toString()).value = value;
+        var input = $('INPUT_'+index);
+        if( value > 9 ) $('VALUE_'+index).innerHTML = value.toString();
+        else $('VALUE_'+index).innerHTML = "0" + value.toString();
+        
+        if( _refresh_index < 21 ) {
+            _midi_output_port.send( _prop_to_midi( [0x0005,++_refresh_index,0,0,0,0] ));
+        }
+    }
+}
+
+function _write_firmware( object )
+{
+    var reader = new FileReader();
+    reader.onload = function(ee)
+    {
+        data = new Uint8Array( ee.target.result );
+        
+        _disable_interface();        
+        $('update').innerHTML = "...";
+
+        _dfu_transfer_count = 0;
+        _dfu_transfer_data = data;
+        _dfu_transfer_size = data.length;
+                
+        _midi_output_port.send( _prop_to_midi( [0x0002,0,0,0,0,0] ));
+    };
+    reader.readAsArrayBuffer( object.target.files[0] );
+}
+
+function _live_update( event )
+{
+    $('update').innerHTML = "...";
+    data = new Uint8Array( _image.length );
+    for( var ii = 0; ii < _image.length; ++ii ) data[ii] = _image.charCodeAt(ii);
+    _dfu_transfer_count = 0;
+    _dfu_transfer_data = data;
+    _dfu_transfer_size = data.length;
+    _midi_output_port.send( _prop_to_midi( [0x0002,0,0,0,0,0] ));
+}
+
+function _prop_to_midi( property )
+{
+    var midi_data = [0xF0];
+    for( var ii = 0; ii < 6; ++ii )
+    {
+        midi_data.push( (property[ii]>>28)&15 ); midi_data.push( (property[ii]>>24)&15 );
+        midi_data.push( (property[ii]>>20)&15 ); midi_data.push( (property[ii]>>16)&15 );
+        midi_data.push( (property[ii]>>12)&15 ); midi_data.push( (property[ii]>> 8)&15 );
+        midi_data.push( (property[ii]>> 4)&15 ); midi_data.push( (property[ii]>> 0)&15 );
+    }
+    midi_data.push( 0xF7 );
+    return midi_data;
+}
+
+function _midi_to_prop( midi_data )
+{
+    var property = [0,0,0,0,0,0];
+        
+    if( midi_data.length < 50 ) return property;
+    if( midi_data[ 0] != 0xF0 ) return property;
+    if( midi_data[49] != 0xF7 ) return property;
+    
+    for( var ii = 0; ii < 6; ++ii )
+    {
+        property[ii] = (midi_data[8*ii+1]<<28) + (midi_data[8*ii+2]<<24)
+                     + (midi_data[8*ii+3]<<20) + (midi_data[8*ii+4]<<16)
+                     + (midi_data[8*ii+5]<<12) + (midi_data[8*ii+6]<< 8)
+                     + (midi_data[8*ii+7]<< 4) + (midi_data[8*ii+8]<< 0);
+    }
+    return property;
+}
+
+</script>
+
+<style>
+
+html { font-family: sans-serif; -ms-text-size-adjust: 100%; -webkit-text-size-adjust: 100%; }
+body { margin-top: 0px; margin-bottom: 0px; margin-left: 10px; margin-right: 10px; }
+
+button, input, optgroup, select, textarea { color: inherit; font: inherit; margin: 0; }
+button { overflow: visible; }
+button, select { text-transform: none; }
+
+button, html input[type="button"],
+input[type="reset"],
+input[type="submit"] { -webkit-appearance: button; cursor: pointer; }
+
+button[disabled], html input[disabled] { cursor: default; }
+
+.container { position: relative; width: 100%; margin: 0 0; padding: 0 0; }
+.column,
+.columns { width: 100%; float: left; box-sizing: border-box; padding: 0px;}
+
+html { font-size: 62.5%; }
+body {
+  font-size: 1.5em; line-height: 0.5; font-weight: 400;
+  font-family: "Raleway", "HelveticaNeue", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  background-color: #000; color:#CCC }
+
+h1, h2, h3, h4, h5, h6 { margin-top: 0; margin-bottom: 0rem; font-weight: 300; }
+h3 { font-size: 2.5rem; line-height: 1.0;  letter-spacing: -.1rem; }
+h5 { font-size: 1.8rem; line-height: 2.0;  letter-spacing: -.05rem; }
+
+button, html input[type="button"],
+input[type="reset"],
+input[type="submit"] { -webkit-appearance: button; cursor: pointer; }
+
+button[disabled], html input[disabled] { cursor: default; }
+
+.parameter { display:flex; flex-direction:column; align-items:bottom; justify-content:center;
+             background-color:#000; border-color:#000; width:84px; height:22px;}
+
+.filename { display:flex; flex-direction:column; align-items:bottom; justify-content:left; color:#ccc; background-color:#000; border-color:#000;}
+
+.button, button, select, input[type="button"]
+{
+  display:flex; align-items:center; justify-content:center;
+  -webkit-appearance: none; -webkit-transition: .2s;
+  height:30px; width:90px;
+  margin-top:0; margin-bottom:0;
+  font-size: 16px; font-weight: 500; text-decoration: none; white-space: nowrap;
+  outline: none;
+  border-radius: 3px; border: 0px solid #CCC;
+  cursor: pointer;
+  line-height:22px; letter-spacing: 0rem;
+  background: #555; opacity: 0.8; transition: opacity .2s; padding: 1px;
+}
+input.button:active, button:active,
+input[type="button"]:active { color: #EEE; background-color: #888; border-color: #CCC; }
+input.button:disabled, button:disabled,
+input[type="button"]:disabled { color: #777; background-color: #222; border-color: #777; outline: 0; }
+
+input.slider {
+    display:flex; align-items:center; justify-content:left;
+    -webkit-appearance: none; -webkit-transition: .2s;
+    width: 100%; height: 31px; outline: none;
+    border-radius: 3px; border: 1px solid #fff;
+    background: #999; opacity: 0.5; transition: opacity .2s; padding: 1px;
+    pointer-events: none;
+}
+input.slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none; opacity: 0.8; 
+    width:48px; height:29px;
+    border-radius: 3px; border: 1px solid #FFF;
+    background: #555;
+    cursor: pointer; pointer-events: auto;
+}
+input.slider::-webkit-slider-thumb:active { background-color: #111; border-color: #fff; opacity: 1.0; } {}
+
+</style>
+
+<script>
+var _image='';
+</script>
+
+</html>
