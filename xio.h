@@ -75,14 +75,6 @@ extern void xio_thread5( int samples[32], const int property[6] );
 void flash_read ( int page, byte data[256] );
 void flash_write( int page, const byte data[256] );
 
-unsigned timer_count( void );
-void timer_delay( int microseconds );
-
-void midi_send_start( void );      // Send MIDI start command to USB host.
-void midi_send_stop( void );       // Send MIDI stop command to USB host.
-void midi_send_beat( void );       // Send MIDI beat command to USB host.
-void midi_configure( double bpm ); // Enable (bpm>0) or disable (bpm<=0) MIDI beat clock.
-
 // Functions for peripheral control (*** Only use these in the 'xio_control' function ***).
 // I2C ans SPI share the same pins (SPI SCLK and I2C SCL, SPI MOSI and I2C SDA).
 // For multiple SPI slave devices use an I2S bus expander to implement multiple SPI CSEL signals.
@@ -95,14 +87,5 @@ byte i2c_write( byte value ); // Write 8-bit data value.
 byte i2c_read ( void );       // Read 8-bit data value.
 void i2c_ack  ( byte ack );   // Assert the ACK/NACK bit after a read.
 void i2c_stop ( void );       // Assert an I2C stop condition.
-
-void spi_init ( int speed );  // Set the SPI bit rate (bps), this SPI bus is *not* full-duplex.
-void spi_write( byte value ); // Write one byte (SPI SCLK is I2C SCL, SPI MOSI is I2C SDA).
-byte spi_read ( void );       // Read one byte (SPI SCLK is I2C SCL, SPI MISO is I2C SDA).
-
-void log_chr( char val );                  // Print single text character.
-void log_str( const char* text );          // Print null-terminated text string.
-void log_hex( byte val );                  // Print 1-byte ASCII/HEX value.
-void log_bin( const byte* data, int len ); // Print binary as ASCII/HEX.
 
 #endif // XIO_H
